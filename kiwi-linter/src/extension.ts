@@ -10,7 +10,7 @@ import { getSuggestLangObj } from './getLangData';
 import { DIR_ADAPTOR, KiwiSearchTypes } from './const';
 import { findAllI18N, findI18N } from './findAllI18N';
 import { triggerUpdateDecorations } from './chineseCharDecorations';
-import { TargetStr, TranslateAPiEnum } from './define';
+import { LangSceneParam, TargetStr, TranslateAPiEnum } from './define';
 import { replaceAndUpdate } from './replaceAndUpdate';
 import { AutoImportI18NFixer } from './autoImportI18n';
 import {
@@ -21,7 +21,9 @@ import {
   getKiwiLinterConfigFile,
   getCurrActivePageI18nKey,
   getTranslateAPiList,
-  getSafePath
+  getSafePath,
+  getLangSceneByAlibabaConsole,
+  findMatchKeyWithScene
 } from './utils';
 
 /**
@@ -39,6 +41,12 @@ export function activate(context: vscode.ExtensionContext) {
   const ui = new UI();
   let translateApi = translateApiList[translateApiList.length - 1].label;
   ui.init(translateApi);
+
+  /** 更新状态栏文案 */
+  const updateKiwiGoBarStatusBar = (title: string) => {
+    ui.kiwiGoBar.text = title;
+    ui.kiwiGoBar.show();
+  };
 
   vscode.commands.registerCommand('vscode-i18n-linter.switchTranslateApi', () => {
     if (translateApiList.length > 1) {
@@ -328,6 +336,20 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('没有找到可替换的文案');
         return;
       }
+      const openLangScene = getConfiguration('langScene') as boolean;
+      const aliConsoleAK = getConfiguration('aliConsoleAK') as string;
+      const agentAppId = getConfiguration('agentAppId') as string;
+
+      if (openLangScene) {
+        if (!agentAppId) {
+          vscode.window.showInformationMessage('未配置agentAppId');
+          return;
+        }
+        if (!aliConsoleAK) {
+          vscode.window.showInformationMessage('未配置aliConsoleAK');
+          return;
+        }
+      }
       vscode.window
         .showInputBox({
           prompt: '请调整文案抽取后的位置，格式 `I18N.[page]`，不修改即默认',
@@ -338,9 +360,13 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
         })
-        .then((path: string) => {
+        .then(async (path: string) => {
           if (!path) {
             return;
+          }
+          if (openLangScene) {
+            // 开始替换 更新loading
+            updateKiwiGoBarStatusBar(`$(loading~spin)KiwiGo`);
           }
           const newPath = getSafePath(
             path
@@ -368,66 +394,103 @@ export function activate(context: vscode.ExtensionContext) {
           }, '');
           console.log('key值翻译原文：', translateTexts);
 
-          translateText(translateTexts, translateApi)
-            .then(translateTexts => {
-              console.log('翻译后：', translateTexts);
-              const replaceableStrs = sortTargetStrs.reduce((prev, curr, i) => {
-                const key = findMatchKey(finalLangObj, curr.text);
-                if (!virtualMemory[curr.text]) {
-                  if (key) {
-                    virtualMemory[curr.text] = key;
-                    return prev.concat({
-                      target: curr,
-                      key: `${key}`
-                    });
-                  }
-                  const transText = translateTexts[i] && _.camelCase(translateTexts[i]);
-                  let transKey = `${newPath + '.'}${transText}`;
-                  let occurTime = 1;
-                  // 防止出现前四位相同但是整体文案不同的情况
-                  while (
-                    finalLangObj[transKey] !== curr.text &&
-                    _.keys(finalLangObj).includes(`${transKey}${occurTime >= 2 ? occurTime : ''}`)
-                  ) {
-                    occurTime++;
-                  }
-                  if (occurTime >= 2) {
-                    transKey = `${transKey}${occurTime}`;
-                  }
-                  virtualMemory[curr.text] = transKey;
-                  finalLangObj[transKey] = curr.text;
+          const activeEditor = vscode.window.activeTextEditor;
+          const text = activeEditor.document.getText();
+
+          let langScene: LangSceneParam['langs'] = [];
+          // 开启场景时才调用模型
+          if (openLangScene) {
+            try {
+              const sceneParam: LangSceneParam = {
+                code: text,
+                langs: sortTargetStrs.map(i => {
+                  return {
+                    text: i.text,
+                    line: [i.range.start.line, i.range.end.line]
+                  };
+                })
+              };
+              const res = await getLangSceneByAlibabaConsole(sceneParam);
+              langScene = res as any;
+            } catch (error) {
+              vscode.window.showErrorMessage(_.isString(error) ? error : '文案场景生成失败');
+              updateKiwiGoBarStatusBar('KiwiGo');
+              return;
+            }
+          }
+
+          let translatedTexts;
+          try {
+            translatedTexts = await translateText(translateTexts, translateApi);
+
+            const replaceableStrs = sortTargetStrs.reduce((prev, curr, i) => {
+              // 比较场景和文案 是否都一样，是则视为同一个文案
+              const key = openLangScene
+                ? findMatchKeyWithScene(finalLangObj, curr.text, langScene[i])
+                : findMatchKey(finalLangObj, curr.text);
+              if (!virtualMemory[curr.text]) {
+                if (key) {
+                  virtualMemory[curr.text] = key;
                   return prev.concat({
                     target: curr,
-                    key: transKey
-                  });
-                } else {
-                  return prev.concat({
-                    target: curr,
-                    key: virtualMemory[curr.text]
+                    key: `${key}`
                   });
                 }
-              }, []);
-
-              replaceableStrs
-                .reverse()
-                .reduce((prev: Promise<any>, obj) => {
-                  return prev.then(() => {
-                    return replaceAndUpdate(obj.target, `I18N.${obj.key}`, false);
-                  });
-                }, Promise.resolve())
-                .then(() => {
-                  vscode.window.showInformationMessage('替换完成');
-                  if (autoFixer) {
-                    autoFixer.fix(vscode.window.activeTextEditor.document);
-                  }
-                })
-                .catch(e => {
-                  vscode.window.showErrorMessage(e.message);
+                const transText = translatedTexts[i] && _.camelCase(translatedTexts[i]);
+                let transKey = `${newPath + '.'}${
+                  openLangScene && (langScene[i] || 'noScene') !== 'noScene'
+                    ? `${langScene[i]}_${transText}`
+                    : transText
+                }`;
+                let occurTime = 1;
+                // 防止出现前四位相同但是整体文案不同的情况
+                while (
+                  finalLangObj[transKey] !== curr.text &&
+                  _.keys(finalLangObj).includes(`${transKey}${occurTime >= 2 ? occurTime : ''}`)
+                ) {
+                  occurTime++;
+                }
+                if (occurTime >= 2) {
+                  transKey = `${transKey}${occurTime}`;
+                }
+                virtualMemory[curr.text] = transKey;
+                finalLangObj[transKey] = curr.text;
+                return prev.concat({
+                  target: curr,
+                  key: transKey
                 });
-            })
-            .catch(err => {
-              vscode.window.showErrorMessage(err);
-            });
+              } else {
+                return prev.concat({
+                  target: curr,
+                  key: virtualMemory[curr.text]
+                });
+              }
+            }, []);
+
+            replaceableStrs
+              .reverse()
+              .reduce((prev: Promise<any>, obj) => {
+                return prev.then(() => {
+                  return replaceAndUpdate(obj.target, `I18N.${obj.key}`, false);
+                });
+              }, Promise.resolve())
+              .then(() => {
+                vscode.window.showInformationMessage('替换完成');
+                if (autoFixer) {
+                  autoFixer.fix(vscode.window.activeTextEditor.document);
+                }
+              })
+              .catch(e => {
+                vscode.window.showErrorMessage(e.message);
+              })
+              .finally(() => {
+                // 替换结束
+                updateKiwiGoBarStatusBar('KiwiGo');
+              });
+          } catch (error) {
+            updateKiwiGoBarStatusBar('KiwiGo');
+            vscode.window.showErrorMessage(error);
+          }
         });
     })
   );

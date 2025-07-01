@@ -8,8 +8,9 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as slash from 'slash2';
 import * as globby from 'globby';
+import axios from 'axios';
 import { pinyin } from 'pinyin-pro';
-import { TranslateAPiEnum } from './define';
+import { LangSceneParam, TranslateAPiEnum } from './define';
 import { getObjectLiteralExpression } from './astUtils';
 import { I18N_GLOB } from './const';
 
@@ -58,6 +59,24 @@ export function findPositionInCode(text: string, code: string) {
 export function findMatchKey(langObj, text) {
   for (const key in langObj) {
     if (langObj[key] === text) {
+      return key;
+    }
+  }
+
+  return null;
+}
+
+export function findMatchKeyWithScene(langObj, text, scene) {
+  for (const key in langObj) {
+    // 取path上最后一级为key, 解析出key中的场景
+    const langLastKey = key
+      .split('.')
+      .pop()
+      .split('_');
+    // 如果key中包含场景，则取第一项第一项
+    const currScene = langLastKey.length > 1 ? langLastKey[0] : '';
+    // 文案相同，且场景相同 则视为相同文案
+    if (langObj[key] === text && (currScene || 'noScene') === (scene || 'noScene')) {
       return key;
     }
   }
@@ -363,3 +382,57 @@ export function getSafePath(path: string) {
   }
   return path;
 }
+
+/**
+ *
+ * @param str 输入
+ * @param defaultReturn JSON解析失败时的返回值
+ * @returns
+ */
+export function safeJSONParse(str: string, defaultReturn?: any) {
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return defaultReturn;
+  }
+}
+
+/**
+ *
+ * @param obj AI场景提取 阿里云百练千问调用
+ * @param AK 千问AK
+ * @returns
+ */
+export const getLangSceneByAlibabaConsole = (obj: LangSceneParam) => {
+  const aliConsoleAK = getConfiguration('aliConsoleAK') as string;
+  const agentAppId = getConfiguration('agentAppId') as string;
+  return new Promise((resolve, reject) => {
+    axios
+      .post(
+        // 百练-翻译机应用-已发布API
+        `https://dashscope.aliyuncs.com/api/v1/apps/${agentAppId}/completion`,
+        {
+          input: {
+            prompt: JSON.stringify(obj)
+          }
+        },
+        {
+          headers: {
+            Authorization: aliConsoleAK,
+            'Content-Type': 'application/json'
+          }
+        }
+      )
+      .then(data => {
+        const res = _.get(data, 'data.output.text');
+        if (res) {
+          resolve(safeJSONParse(res));
+        } else {
+          reject(`${res.errorMsg}: ${res.data}`);
+        }
+      })
+      .catch(err => {
+        reject(err);
+      });
+  });
+};

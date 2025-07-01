@@ -25,3 +25,11 @@ export enum TranslateAPiEnum {
   /** 拼音 */
   PinYin = 'pinyin'
 }
+
+/** 文案场景提取参数 */
+export interface LangSceneParam {
+  /** 上下文 */
+  code: string;
+  /** 文案 */
+  langs: Array<{ text: string; line: number[]; scene?: string }>;
+}
