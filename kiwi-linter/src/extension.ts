@@ -425,12 +425,12 @@ export function activate(context: vscode.ExtensionContext) {
 
             const replaceableStrs = sortTargetStrs.reduce((prev, curr, i) => {
               // 比较场景和文案 是否都一样，是则视为同一个文案
-              const key = openLangScene
-                ? findMatchKeyWithScene(finalLangObj, curr.text, langScene[i])
-                : findMatchKey(finalLangObj, curr.text);
-              if (!virtualMemory[curr.text]) {
+
+              const key = findMatchKeyWithScene(finalLangObj, curr.text, langScene[i]);
+              const memoryKey = `${curr.text}_${langScene[i] || ''}`;
+              if (!virtualMemory[memoryKey]) {
                 if (key) {
-                  virtualMemory[curr.text] = key;
+                  virtualMemory[memoryKey] = key;
                   return prev.concat({
                     target: curr,
                     key: `${key}`
@@ -453,7 +453,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (occurTime >= 2) {
                   transKey = `${transKey}${occurTime}`;
                 }
-                virtualMemory[curr.text] = transKey;
+                virtualMemory[memoryKey] = transKey;
                 finalLangObj[transKey] = curr.text;
                 return prev.concat({
                   target: curr,
@@ -462,7 +462,7 @@ export function activate(context: vscode.ExtensionContext) {
               } else {
                 return prev.concat({
                   target: curr,
-                  key: virtualMemory[curr.text]
+                  key: virtualMemory[memoryKey]
                 });
               }
             }, []);
