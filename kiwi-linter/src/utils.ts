@@ -426,7 +426,7 @@ export const getLangSceneByAlibabaConsole = (obj: LangSceneParam) => {
       .then(data => {
         const res = _.get(data, 'data.output.text');
         if (res) {
-          resolve(safeJSONParse(res));
+          resolve(safeJSONParse(res, []));
         } else {
           reject(`${res.errorMsg}: ${res.data}`);
         }
