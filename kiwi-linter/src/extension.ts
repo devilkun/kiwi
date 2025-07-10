@@ -395,18 +395,20 @@ export function activate(context: vscode.ExtensionContext) {
           console.log('key值翻译原文：', translateTexts);
 
           const activeEditor = vscode.window.activeTextEditor;
-          const text = activeEditor.document.getText();
-
           let langScene: LangSceneParam['langs'] = [];
           // 开启场景时才调用模型
           if (openLangScene) {
+            const codeLineMap = {};
+            for (let i = 0; i <= activeEditor.document.lineCount - 1; i++) {
+              codeLineMap[i + 1] = activeEditor.document.lineAt(i).text;
+            }
             try {
               const sceneParam: LangSceneParam = {
-                code: text,
+                code: codeLineMap,
                 langs: sortTargetStrs.map(i => {
                   return {
                     text: i.text,
-                    line: [i.range.start.line, i.range.end.line]
+                    line: i.range.start.line + 1
                   };
                 })
               };

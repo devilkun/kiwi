@@ -29,7 +29,7 @@ export enum TranslateAPiEnum {
 /** 文案场景提取参数 */
 export interface LangSceneParam {
   /** 上下文 */
-  code: string;
+  code: { [key: string]: string };
   /** 文案 */
   langs: Array<{ text: string; line: number[]; scene?: string }>;
 }
